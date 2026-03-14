@@ -1,0 +1,15 @@
+[submodule "sdks/Aurora-SDK"]
+	path = sdks/Aurora-SDK
+	url = https://github.com/qu-bit-electronix/Aurora-SDK
+[submodule "sdks/DaisySP"]
+	path = sdks/DaisySP
+	url = https://github.com/electro-smith/DaisySP
+[submodule "sdks/dpt"]
+	path = sdks/dpt
+	url = https://github.com/joemisra/dpt
+[submodule "sdks/simple-designer-instruments"]
+	path = sdks/simple-designer-instruments
+	url = https://github.com/Synthux-Academy/simple-designer-instruments
+[submodule "sdks/libDaisy"]
+	path = sdks/libDaisy
+	url = https://github.com/electro-smith/libDaisy.git

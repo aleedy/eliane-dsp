@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+
+# Review docs (internal)
+nick-donaldson-review.md
+review-response.md
+
+# AI assistant skill files (internal)
+skills/
+
+# macOS
+.DS_Store
+
+# Editor cruft
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
