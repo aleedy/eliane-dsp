@@ -4,8 +4,10 @@ TARGET = ElianeDSP
 # Build for DFU flashing via CLI (changed from BOOT_SRAM to BOOT_NONE for DFU compatibility)
 APP_TYPE = BOOT_NONE
 
-# Sources — M1: main only, no Engine class yet
-CPP_SOURCES = ElianeDSP_main.cpp
+# Sources — M2: Engine class with one oscillator pair + ring mod + filter
+CPP_SOURCES = \
+    ElianeDSP_main.cpp \
+    Source/Engine.cpp
 
 # Path to Aurora SDK (cloned as submodule)
 AURORA_SDK_PATH = sdks/Aurora-SDK
