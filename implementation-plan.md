@@ -215,14 +215,14 @@ private:
 #### Process() Signal Flow (per sample)
 
 ```
- 1. Smooth all parameters:  fonepole(pitch_a_smooth_, pitch_a_, coeff)  (×10 params)
+ 1. Smooth all parameters:  fonepole(pitch_a_smooth_, pitch_a_, coeff)  (×12 params)
  2. Set osc frequencies:    osc_[0] = pitch_a_smooth_
-                            osc_[1] = pitch_a_smooth_ + spread_a_smooth_
-                            osc_[2] = pitch_b_smooth_
-                            osc_[3] = pitch_b_smooth_ + spread_b_smooth_
- 3. Set filter cutoffs:     lpf_[0] = 2 × pitch_a_smooth_
-                            lpf_[1] = 2 × pitch_b_smooth_
-                            lpf_[2] = 2 × pitch_a_smooth_ + 2 × pitch_b_smooth_
+                             osc_[1] = pitch_a_smooth_ + spread_a_smooth_
+                             osc_[2] = pitch_b_smooth_
+                             osc_[3] = pitch_b_smooth_ + spread_b_smooth_
+ 3. Set filter cutoffs:     lpf_[0] = 3 × pitch_a_smooth_
+                             lpf_[1] = 3 × pitch_b_smooth_
+                             lpf_[2] = 3 × pitch_a_smooth_ + 3 × pitch_b_smooth_
  4. Set filter resonances:  lpf_[i].SetRes(res_smooth_[i])
  5. Generate osc samples:   s0 = osc_[0].Process()  ...  s3 = osc_[3].Process()
  6. Ring mod A:             rm_a = s0 × s1
@@ -234,7 +234,7 @@ private:
 12. Mix:                    out = lp_a × mix_smooth_[0]
                                 + lp_b × mix_smooth_[1]
                                 + lp_c × mix_smooth_[2]
-13. Return out
+13. Return out × kOutputGain
 ```
 
 **Note**: Setting osc frequencies and filter cutoffs every sample is intentional — the
@@ -618,23 +618,23 @@ milestone**: if this doesn't sound right, we adjust before building further.
 - `Source/Constants.h` — add Pitch B default
 - `ElianeDSP_main.cpp` — map all 4 direct knobs
 
-**Temporary control mapping (M3 — before cycled knobs, via DaisySeed ADC)**:
-| Daisy Pin | Aurora Equiv. | Function |
-|-----------|--------------|----------|
-| `seed::A0` | `KNOB_TIME` | Pitch A |
-| `seed::A1` | `KNOB_REFLECT` | Pitch B |
-| `seed::A8` | `KNOB_MIX` | Spread A |
-| `seed::A10` | `KNOB_ATMOSPHERE` | Spread B |
-| `seed::A11` | `KNOB_BLUR` | Mix (all 3 channels equally — temporary) |
-| `seed::A9` | `KNOB_WARP` | Resonance (all 3 filters equally — temporary) |
+**Control mapping (M3 — row-based, via DaisySeed ADC)**:
+| Row | Daisy Pin | Aurora Equiv. | Function |
+|-----|-----------|--------------|----------|
+| Top-Left | `seed::A9` | `KNOB_WARP` | Pitch A |
+| Top-Right | `seed::A0` | `KNOB_TIME` | Pitch B |
+| Mid-Left | `seed::A11` | `KNOB_BLUR` | Spread A |
+| Mid-Right | `seed::A1` | `KNOB_REFLECT` | Spread B |
+| Bot-Left | `seed::A8` | `KNOB_MIX` | Mix (all 3 channels equally — temporary) |
+| Bot-Right | `seed::A10` | `KNOB_ATMOSPHERE` | Resonance (all 3 filters equally — temporary) |
 
 **Acceptance criteria**:
 - [ ] Two independent oscillator pairs audible with separate pitch control
 - [ ] Cross-ring-mod (Ring Mod C) producing additional tonal complexity
-- [ ] LPF C tracking at `2×pitchA + 2×pitchB`
-- [ ] All 4 direct knobs affecting their respective parameters
-- [ ] `seed::A11` (KNOB_BLUR) fading all 3 channels uniformly
-- [ ] `seed::A9` (KNOB_WARP) sweeping all 3 filters uniformly
+- [ ] LPF A tracking at `3×pitchA`, LPF B at `3×pitchB`, LPF C at `3×pitchA + 3×pitchB`
+- [ ] All 6 knobs affecting their respective parameters
+- [ ] `KNOB_MIX` (A8) fading all 3 channels uniformly
+- [ ] `KNOB_ATMOSPHERE` (A10) sweeping all 3 filters uniformly
 - [ ] Different Pair A / Pair B pitches produce clearly different beating patterns
 - [ ] CPU load < 30% (full signal path)
 - [ ] No audible zipper noise on any parameter sweep
@@ -647,7 +647,8 @@ headers on the include path to catch accidental platform coupling.
 ### M4: DaisySeed HAL + Cycled Knobs + Soft Takeover
 
 **Goal**: Full control surface. Extract hardware-specific code into `DaisySeedHal`.
-Implement cycled knobs for independent mix/resonance control per channel.
+Implement cycled knobs for independent mix/resonance control per channel using a **single
+shared cycle** (one button cycles both knobs together).
 
 > **Note**: Originally planned as `AuroraHal` wrapping `aurora::Hardware`. Changed to
 > `DaisySeedHal` using `daisy::DaisySeed` directly due to Aurora REV4 I2C defect
@@ -659,17 +660,24 @@ Implement cycled knobs for independent mix/resonance control per channel.
 - `Source/SoftTakeover.h`
 - `Source/CycledKnob.h`
 
+**Control behavior**:
+- **SW_SHIFT** (D13) cycles both Mix and Resonance knobs together to the same channel:
+  A → B → C → A
+- Both knobs share the same selected channel — adjusting Mix A also means Resonance is
+  targeting A
+- SW_FREEZE and SW_REVERSE are left unassigned (available for future use)
+
 **Files modified**:
 - `ElianeDSP_main.cpp` — simplified to thin glue (as shown in section 4.6)
 - `Makefile` — add `Source/DaisySeedHal.cpp` to `CPP_SOURCES`
 
 **Acceptance criteria**:
-- [ ] `SW_FREEZE` (D1) cycles mix channel: A → B → C → A
-- [ ] `SW_REVERSE` (D9) cycles resonance filter: A → B → C → A
+- [ ] `SW_SHIFT` (D13) cycles both Mix and Resonance together: A → B → C → A
 - [ ] Soft takeover prevents audible parameter jumps when cycling
 - [ ] Stored values persist when cycling away from and back to a channel
-- [ ] Each mix channel independently controllable via `seed::A11` (KNOB_BLUR)
-- [ ] Each filter resonance independently controllable via `seed::A9` (KNOB_WARP)
+- [ ] Each mix channel independently controllable via `KNOB_MIX` (A8)
+- [ ] Each filter resonance independently controllable via `KNOB_ATMOSPHERE` (A10)
+- [ ] Both knobs always target the same channel (shared cycle)
 - [ ] All 10 parameters (4 direct + 3 mix + 3 resonance) independently controllable
 - [ ] Engine has zero Aurora SDK imports (verified: `grep -r "aurora" Source/Engine.*` returns nothing)
 - [ ] DaisySeedHal has zero `aurora.h` imports (verified: `grep -r "aurora" Source/DaisySeedHal.*` returns nothing)
@@ -690,14 +698,13 @@ Makes the cycled knob system actually usable.
 - `Source/AuroraHal.cpp` — implement `UpdateLeds()` method
 - `Source/Constants.h` — LED pulse rate constants (already defined)
 
-**LED allocation** (LEDs 1-4 of Aurora's 11):
+**LED allocation** (LEDs 1-2 of Aurora's 11, shared cycle):
 
 | LED | Purpose | Colors |
 |-----|---------|--------|
-| LED 1 (RGB) | Mix: active channel indicator | Red=A, Green=B, Blue=C |
-| LED 2 (RGB) | Mix: soft takeover direction | Blue=turn right, Red=turn left |
-| LED 3 (RGB) | Resonance: active channel indicator | Red=A, Green=B, Blue=C |
-| LED 4 (RGB) | Resonance: soft takeover direction | Blue=turn right, Red=turn left |
+| LED 1 (RGB) | Channel indicator (shared for Mix and Res) | Red=A, Green=B, Blue=C |
+| LED 2 (RGB) | Soft takeover direction (shared) | Blue=turn right, Red=turn left |
+| LEDs 3-4 (RGB) | Unassigned | Reserved for future use |
 | LEDs 5-11 | Unassigned | Reserved for future use |
 
 **Soft takeover LED behavior**:
@@ -792,22 +799,27 @@ Load the eliane-dsp project:
 - /Users/adamleedy/claude/projects/eliane-dsp/signal-path-design.md
 - /Users/adamleedy/claude/projects/eliane-dsp/architecture-decisions.md
 - /Users/adamleedy/claude/projects/eliane-dsp/implementation-plan.md
+- /Users/adamleedy/claude/projects/eliane-dsp/skills/aurora-hardware.skill.md
 
-Load skill files:
-- /Users/adamleedy/claude/projects/eliane-dsp/skills/aurora-sdk.skill.md
-- /Users/adamleedy/claude/projects/eliane-dsp/skills/daisysp.skill.md
-- /Users/adamleedy/claude/projects/eliane-dsp/skills/libdaisy.skill.md
+Read the current source files:
+- /Users/adamleedy/claude/projects/eliane-dsp/ElianeDSP_main.cpp
+- /Users/adamleedy/claude/projects/eliane-dsp/Source/Engine.h
+- /Users/adamleedy/claude/projects/eliane-dsp/Source/Engine.cpp
+- /Users/adamleedy/claude/projects/eliane-dsp/Source/Constants.h
+- /Users/adamleedy/claude/projects/eliane-dsp/Makefile
 
-SDKs are cloned at: /Users/adamleedy/claude/projects/eliane-dsp/sdks/
-  Aurora-SDK/, DaisySP/, libDaisy/, dpt/, simple-designer-instruments/
+CURRENT STATUS: M2 complete (commit 3241ab3). Ready to implement M3 (full signal path).
+- Filter tracking: 3× pitch (validated in M2)
+- Knob mapping: row-based layout (Pitch A/B top, Spread A/B mid, Mix/Res bottom)
+- Cycled knobs: single shared cycle via SW_SHIFT (M4)
+- kOutputGain = 0.65 to avoid analog clipping
+- DFU deploy via `make program-dfu`
 
-CURRENT STATUS: M1 complete. Using DaisySeed directly (not aurora::Hardware) due to
-I2C hardware defect — see ADR-004. DFU deploy via `make program-dfu`. M5 blocked
-pending I2C repair. Qu-Bit contacted.
+M3 goal: Full signal path (4 osc, 3 ring mods, 3 filters, mixer).
 
 TASK: [describe what to work on next]
 ```
 
 ---
 
-**Last Updated**: 2026-03-15 (rev 3 — DaisySeed direct approach, ADR-004, M1 complete, M5 blocked)
+**Last Updated**: 2026-03-15 (rev 4 — M2 complete, M3 planned with row-based knobs, 3× filter tracking, single shared cycle)

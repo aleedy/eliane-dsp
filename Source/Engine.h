@@ -1,6 +1,5 @@
 // Engine.h — Eliane-DSP synthesis engine
-// M2: One oscillator pair + ring mod + filter — core sound validation.
-// Full engine expanded in M3.
+// M3: Full signal path — 4 oscillators, 3 ring mods, 3 filters, 3-channel mixer.
 
 #pragma once
 #include <daisysp.h>
@@ -21,40 +20,40 @@ public:
 
     // --- Parameter setters (called by HAL at block rate) ---
 
-    // Pitch: base frequency for oscillator pair A (Hz)
+    // Pitch: base frequency for oscillator pair A/B (Hz)
     void SetPitchA(float freq_hz);
+    void SetPitchB(float freq_hz);
 
-    // Spread: bipolar detuning of second oscillator in pair A (Hz)
+    // Spread: bipolar detuning of second oscillator in each pair (Hz)
     // Positive = osc2 higher, negative = osc2 lower, zero = unison
     void SetSpreadA(float delta_hz);
+    void SetSpreadB(float delta_hz);
 
-    // Filter resonance: SVF resonance for pair A's filter (0.0 - 1.0)
-    // Channel parameter reserved for M3; in M2, channel 0 is used
-    void SetResonance(int channel, float res);
-
-    // Mix level: output level for pair A (0.0 - 1.0)
-    // Channel parameter reserved for M3; in M2, channel 0 is used
+    // Mix level: output level for channel (0=A, 1=B, 2=C)
     void SetMixLevel(int channel, float level);
+
+    // Filter resonance: per-filter SVF resonance (0.0 - 1.0)
+    // channel: 0=A, 1=B, 2=C
+    void SetResonance(int channel, float res);
 
 private:
     float sample_rate_;
 
-    // --- DSP modules for pair A ---
-    daisysp::Oscillator osc_a1_;   // First oscillator in pair A
-    daisysp::Oscillator osc_a2_;   // Second oscillator in pair A (for spread)
-    daisysp::Svf lpf_a_;           // Tracking low-pass filter for pair A
+    // --- DSP modules ---
+    daisysp::Oscillator osc_[4];   // [0]=A1, [1]=A2, [2]=B1, [3]=B2
+    daisysp::Svf lpf_[3];          // [0]=A, [1]=B, [2]=C (LP mode)
 
     // --- Parameter targets (set by setters) ---
-    float pitch_a_;
-    float spread_a_;
-    float mix_level_;
-    float resonance_;
+    float pitch_a_, pitch_b_;
+    float spread_a_, spread_b_;
+    float mix_level_[3];
+    float resonance_[3];
 
     // --- Smoothed values (converge toward targets via fonepole) ---
-    float pitch_a_smooth_;
-    float spread_a_smooth_;
-    float mix_smooth_;
-    float res_smooth_;
+    float pitch_a_smooth_, pitch_b_smooth_;
+    float spread_a_smooth_, spread_b_smooth_;
+    float mix_smooth_[3];
+    float res_smooth_[3];
 
     // Non-copyable
     Engine(const Engine&) = delete;

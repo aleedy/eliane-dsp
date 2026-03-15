@@ -37,5 +37,10 @@ constexpr int kNumChannels = 3;
 // See skills/aurora-hardware.skill.md for test data.
 constexpr float kOutputGain = 0.65f;
 
+// Filter tracking multiplier — empirically validated in M2.
+// LPF cutoff = kFilterTrackingMultiplier × pitch.
+// 3× passes the sum frequency (upper sideband) from ring modulation.
+constexpr float kFilterTrackingMultiplier = 3.0f;
+
 }  // namespace eliane
 }  // namespace atelier

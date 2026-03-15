@@ -98,9 +98,9 @@ mixer that produces the final stereo output.
 - **Note**: True ring mod (4-quadrant multiplication), NOT amplitude modulation
 
 ### Low-Pass Filters (×3)
-- **LPF A**: cutoff = 2 × f₀ (tracks Pitch A, doubled to pass upper sidebands)
-- **LPF B**: cutoff = 2 × g₀ (tracks Pitch B, doubled to pass upper sidebands)
-- **LPF C**: cutoff = 2×f₀ + 2×g₀ (sum of LPF A and LPF B cutoffs — theoretically
+- **LPF A**: cutoff = 3 × f₀ (tracks Pitch A, tripled to pass upper sidebands — validated empirically in M2)
+- **LPF B**: cutoff = 3 × g₀ (tracks Pitch B, tripled to pass upper sidebands)
+- **LPF C**: cutoff = 3×f₀ + 3×g₀ (sum of LPF A and LPF B cutoffs — theoretically
   correct upper sideband limit for Ring Mod C, since its inputs are already band-limited
   by LPF A and LPF B)
 - **Filter type**: `Svf` (DaisySP state-variable filter)
@@ -134,9 +134,9 @@ These are the parameters the synthesis engine needs, independent of any hardware
 ### Derived Parameters (Auto-Tracked, Not User-Controlled)
 | Parameter | Derived From | Formula |
 |-----------|-------------|---------|
-| LPF A cutoff | Pitch A | 2 × f₀ (doubled to pass upper sidebands) |
-| LPF B cutoff | Pitch B | 2 × g₀ (doubled to pass upper sidebands) |
-| LPF C cutoff | Pitch A + Pitch B | 2×f₀ + 2×g₀ (sum — max upper sideband of cross-mod) |
+| LPF A cutoff | Pitch A | 3 × f₀ (tripled to pass upper sidebands) |
+| LPF B cutoff | Pitch B | 3 × g₀ (tripled to pass upper sidebands) |
+| LPF C cutoff | Pitch A + Pitch B | 3×f₀ + 3×g₀ (sum — max upper sideband of cross-mod) |
 | Osc 1 frequency | Pitch A | f₀ |
 | Osc 2 frequency | Pitch A + Spread A | f₀ + Δ |
 | Osc 3 frequency | Pitch B | g₀ |
@@ -145,7 +145,7 @@ These are the parameters the synthesis engine needs, independent of any hardware
 ### Additional Parameters (Resolved or Deferred)
 | Parameter | Decision | Notes |
 |-----------|----------|-------|
-| LPF C cutoff | Auto-tracked: 2×f₀ + 2×g₀ | Sum of LPF A and LPF B cutoffs |
+| LPF C cutoff | Auto-tracked: 3×f₀ + 3×g₀ | Sum of LPF A and LPF B cutoffs. 3× multiplier empirically validated in M2. |
 | LPF resonance (×3) | Controllable per filter | Via KNOB_WARP, cycled with SW_REVERSE |
 | Pair ratio | Default 1:2 (80/160 Hz), easily tweakable | Defined as a constant for experimentation |
 | Waveform select | Pure sine (WAVE_SIN) | Cleanest ring mod, most Radigue-like |
@@ -207,39 +207,49 @@ and 11 RGB LEDs. The synthesis engine needs 7 primary parameters (4 osc + 3 mix)
 
 ### Control Assignment
 
+**Row-based layout** (see aurora-hardware.skill.md for pin details):
+
+| Row | Left Knob | Right Knob | Function |
+|-----|-----------|------------|----------|
+| Top | KNOB_WARP (A9) | KNOB_TIME (A0) | Pitch A / Pitch B |
+| Mid | KNOB_BLUR (A11) | KNOB_REFLECT (A1) | Spread A / Spread B |
+| Bottom | KNOB_MIX (A8) | KNOB_ATMOSPHERE (A10) | Mix Level (cycled) / Resonance (cycled) |
+
 | Aurora Control | Function | Range / Notes |
 |----------------|----------|---------------|
-| KNOB_TIME | Pitch A | Sets base frequency of Pair A |
-| KNOB_REFLECT | Pitch B | Sets base frequency of Pair B |
-| KNOB_MIX | Spread A | Bipolar, fine (±few Hz), through-zero |
-| KNOB_ATMOSPHERE | Spread B | Bipolar, fine (±few Hz), through-zero |
-| KNOB_BLUR | Mix level (cycled) | Adjusts level for selected channel (A/B/C) |
-| KNOB_WARP | LPF resonance (cycled) | Adjusts resonance for selected filter (A/B/C) |
+| KNOB_WARP | Pitch A | Sets base frequency of Pair A |
+| KNOB_TIME | Pitch B | Sets base frequency of Pair B |
+| KNOB_BLUR | Spread A | Bipolar, fine (±few Hz), through-zero |
+| KNOB_REFLECT | Spread B | Bipolar, fine (±few Hz), through-zero |
+| KNOB_MIX | Mix level (cycled) | Adjusts level for selected channel (A/B/C) |
+| KNOB_ATMOSPHERE | LPF resonance (cycled) | Adjusts resonance for selected filter (A/B/C) |
 | CV_TIME | Pitch A CV | Knob becomes attenuator when cable inserted |
 | CV_REFLECT | Pitch B CV | Knob becomes attenuator when cable inserted |
 | CV_MIX | Spread A CV | Bipolar CV, knob attenuates |
 | CV_ATMOSPHERE | Spread B CV | Bipolar CV, knob attenuates |
 | CV_BLUR | *Reserved* | Unassigned — future use |
 | CV_WARP | *Reserved* | Unassigned — future use |
-| SW_FREEZE | Cycle mix channel | Advances A → B → C → A |
-| SW_REVERSE | Cycle resonance filter | Advances A → B → C → A |
+| SW_SHIFT | Cycle Mix + Resonance together | Both knobs target the same channel: A → B → C → A |
 | SW_SHIFT | *Reserved* | Unassigned — future use |
 | GATE_FREEZE | *Reserved* | Unassigned — future use |
 | GATE_REVERSE | *Reserved* | Unassigned — future use |
 
-### Cycled Knob Pattern
+### Cycled Knob Pattern (Shared Cycle)
 
-Two knobs (BLUR and WARP) each control 3 parameters, cycled by a dedicated button.
-The selected target changes on each button press. Stored values persist when cycling
-away — the knob only affects the currently selected target.
+One button (SW_SHIFT) cycles **both** Mix and Resonance knobs together to the same
+channel. This keeps the two knobs synchronized — when you adjust Mix for stage A,
+Resonance is also targeting stage A.
 
 ```
-  SW_FREEZE press:                    SW_REVERSE press:
-  Mix A → Mix B → Mix C → Mix A      Res A → Res B → Res C → Res A
-    │                                   │
-    └──► KNOB_BLUR adjusts             └──► KNOB_WARP adjusts
-         selected mix level                  selected filter resonance
+  SW_SHIFT press:
+  Mix A + Res A → Mix B + Res B → Mix C + Res C → Mix A + Res A
+    │
+    └──► KNOB_MIX adjusts selected mix level
+    └──► KNOB_ATMOSPHERE adjusts selected filter resonance
 ```
+
+Stored values persist when cycling away — each knob maintains its own stored value
+for each channel.
 
 ### Soft Takeover
 
@@ -250,8 +260,8 @@ begins tracking normally.
 
 **Directional LED indication** (inspired by Eventide Blackhole):
 
-Two LEDs serve as soft takeover indicators (one for mix knob, one for resonance knob).
-They communicate direction and distance to the stored value:
+One LED serves as a shared soft takeover indicator for both cycled knobs (since they
+cycle together). It communicates direction and distance to the stored value:
 
 | Knob vs. Stored Value | LED Color | Pulse Rate |
 |-----------------------|-----------|------------|
@@ -279,10 +289,9 @@ Aurora has 11 RGB LEDs: 8 full RGB (LEDs 1-8) + 3 green/blue only (LEDs 9-11).
 
 | LED | Purpose |
 |-----|---------|
-| LED 1 (RGB) | Mix: active channel indicator (Red=A, Green=B, Blue=C) |
-| LED 2 (RGB) | Mix: soft takeover direction/distance |
-| LED 3 (RGB) | Resonance: active channel indicator (Red=A, Green=B, Blue=C) |
-| LED 4 (RGB) | Resonance: soft takeover direction/distance |
+| LED 1 (RGB) | Channel indicator: active channel (Red=A, Green=B, Blue=C) — shared for Mix and Res |
+| LED 2 (RGB) | Soft takeover direction/distance — shared for Mix and Res (both knobs use same channel) |
+| LEDs 3-4 (RGB) | *Unassigned* — available for future use |
 | LEDs 5-8 (RGB) | *Unassigned* — available for visual feedback (levels, activity, etc.) |
 | LEDs 9-11 (G/B) | *Unassigned* — limited to green/blue only |
 
@@ -301,7 +310,7 @@ The following controls are explicitly unassigned for future use:
 
 | # | Question | Decision | Rationale |
 |---|----------|----------|-----------|
-| 1 | LPF C cutoff tracking | 2×f₀ + 2×g₀ (sum of LPF A+B cutoffs) | Theoretically correct max upper sideband for Ring Mod C, whose inputs are band-limited by LPF A and LPF B |
+| 1 | LPF C cutoff tracking | 3×f₀ + 3×g₀ (sum of LPF A+B cutoffs) | Theoretically correct max upper sideband for Ring Mod C, whose inputs are band-limited by LPF A and LPF B. Empirically validated: 3× multiplier (vs 2×) preserves sum frequency in M2 testing. |
 | 2 | Stereo strategy | Mono output | Same signal to both channels. Stereo panning deferred to future iteration. |
 | 3 | Waveform | Pure sine | Cleanest ring mod sidebands, most faithful to Radigue aesthetic |
 | 4 | Pair A:B ratio | Default 1:2 (80/160 Hz), easily tweakable constant | Starting point for experimentation. CVs set absolute pitch so ratio is implicit. |

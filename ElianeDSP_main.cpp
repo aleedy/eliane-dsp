@@ -1,12 +1,15 @@
-// ElianeDSP_main.cpp — Milestone 2: One oscillator pair + ring mod + filter
+// ElianeDSP_main.cpp — Milestone 3: Full signal path
 //
-// Core sound validation: two near-unison sines ring-modulating, producing slow
-// beating, through a tracking LPF. This is the artistic validation milestone.
+// Complete synthesis engine: 4 oscillators, 3 ring mods, 3 filters, 3-channel mixer.
+// Two independent oscillator pairs with cross-ring-modulation.
 //
-// Controls (via DaisySeed ADC on Aurora REV4):
-// - seed::A0 (KNOB_TIME): Pitch A (20-2000 Hz, logarithmic)
-// - seed::A8 (KNOB_MIX): Spread A (±5 Hz through-zero)
-// - seed::A9 (KNOB_WARP): LPF A resonance (0.0-0.9)
+// Row-based knob layout:
+// - Top row: Pitch A (WARP/A9), Pitch B (TIME/A0)
+// - Mid row: Spread A (BLUR/A11), Spread B (REFLECT/A1)
+// - Bottom row: Mix (MIX/A8), Resonance (ATMOSPHERE/A10)
+//
+// In M3, bottom row knobs affect all 3 channels uniformly.
+// M4 will add button cycling for per-channel control.
 //
 // NOTE: Using DaisySeed directly instead of Aurora Hardware due to Aurora REV4
 // I2C hardware defect. See ADR-004.
@@ -41,13 +44,18 @@ int main(void)
 {
     hw.Init();
 
-    // Configure ADC for control knobs (REV4 pin mappings)
-    // A0 = Pitch, A8 = Spread, A9 = Resonance
-    AdcChannelConfig adc_config[3];
-    adc_config[0].InitSingle(seed::A0);  // KNOB_TIME -> Pitch
-    adc_config[1].InitSingle(seed::A8);  // KNOB_MIX -> Spread
-    adc_config[2].InitSingle(seed::A9);  // KNOB_WARP -> Resonance
-    hw.adc.Init(adc_config, 3);
+    // Configure 6 ADC channels — row-based knob layout
+    // Row 1 (top): Pitch A, Pitch B
+    // Row 2 (mid): Spread A, Spread B
+    // Row 3 (bottom): Mix, Resonance (affects all 3 channels in M3)
+    AdcChannelConfig adc_config[6];
+    adc_config[0].InitSingle(seed::A9);   // KNOB_WARP → Pitch A (top-left)
+    adc_config[1].InitSingle(seed::A0);   // KNOB_TIME → Pitch B (top-right)
+    adc_config[2].InitSingle(seed::A11);  // KNOB_BLUR → Spread A (mid-left)
+    adc_config[3].InitSingle(seed::A1);   // KNOB_REFLECT → Spread B (mid-right)
+    adc_config[4].InitSingle(seed::A8);   // KNOB_MIX → Mix Level (bot-left, all 3 ch)
+    adc_config[5].InitSingle(seed::A10);  // KNOB_ATMOSPHERE → Resonance (bot-right, all 3 ch)
+    hw.adc.Init(adc_config, 6);
     hw.adc.Start();
 
     // Initialize engine
@@ -57,21 +65,31 @@ int main(void)
 
     while (1)
     {
-        // Read knobs and update engine parameters
-        float knob_time = hw.adc.GetFloat(0);        // 0.0 - 1.0
-        float knob_mix = hw.adc.GetFloat(1);         // 0.0 - 1.0  
-        float knob_warp = hw.adc.GetFloat(2);         // 0.0 - 1.0
+        // Read all 6 knobs
+        float knob_warp = hw.adc.GetFloat(0);       // Pitch A (top-left)
+        float knob_time = hw.adc.GetFloat(1);        // Pitch B (top-right)
+        float knob_blur = hw.adc.GetFloat(2);       // Spread A (mid-left)
+        float knob_reflect = hw.adc.GetFloat(3);    // Spread B (mid-right)
+        float knob_mix = hw.adc.GetFloat(4);        // Mix (bot-left)
+        float knob_atmos = hw.adc.GetFloat(5);       // Resonance (bot-right)
 
-        // Map KNOB_TIME (A0) to pitch: 20-2000 Hz, logarithmic
-        float pitch = fmap(knob_time, kMinPitchHz, kMaxPitchHz, Mapping::LOG);
-        engine.SetPitchA(pitch);
+        // Row 1: Pitch controls (logarithmic 20-2000 Hz)
+        float pitch_a = fmap(knob_warp, kMinPitchHz, kMaxPitchHz, Mapping::LOG);
+        float pitch_b = fmap(knob_time, kMinPitchHz, kMaxPitchHz, Mapping::LOG);
+        engine.SetPitchA(pitch_a);
+        engine.SetPitchB(pitch_b);
 
-        // Map KNOB_MIX (A8) to spread: bipolar, through-zero (±kMaxSpreadHz)
-        float spread = (knob_mix - 0.5f) * 2.0f * kMaxSpreadHz;
-        engine.SetSpreadA(spread);
+        // Row 2: Spread controls (bipolar, through-zero)
+        float spread_a = (knob_blur - 0.5f) * 2.0f * kMaxSpreadHz;
+        float spread_b = (knob_reflect - 0.5f) * 2.0f * kMaxSpreadHz;
+        engine.SetSpreadA(spread_a);
+        engine.SetSpreadB(spread_b);
 
-        // Map KNOB_WARP (A9) to resonance: 0.0-1.0 (full range, allows self-oscillation)
-        float resonance = knob_warp;
-        engine.SetResonance(0, resonance);
+        // Row 3: Mix and Resonance (affect all 3 channels in M3)
+        // M4 will add cycling for per-channel control
+        for (int ch = 0; ch < 3; ch++) {
+            engine.SetMixLevel(ch, knob_mix);
+            engine.SetResonance(ch, knob_atmos);
+        }
     }
 }
