@@ -9,10 +9,10 @@ type: Open Questions
 
 ### Platform Abstraction Layer Design
 **Status**: Resolved (see `implementation-plan.md` section 4.5, 4.7)  
-**Resolution**: Engine class with setter methods, AuroraHal as sole hardware consumer.
-Composition over inheritance. No abstract interface class — Engine takes float params,
-HAL reads hardware and calls setters directly. Parameter interface contract defined in
-section 4.7 of implementation plan.
+**Resolution**: Engine class with setter methods, DaisySeedHal as sole hardware consumer
+(originally AuroraHal — renamed due to ADR-004). Composition over inheritance. No abstract
+interface class — Engine takes float params, HAL reads hardware and calls setters directly.
+Parameter interface contract defined in section 4.7 of implementation plan.
 
 ---
 
@@ -53,6 +53,18 @@ waveforms for cleanest sidebands. Svf filter for ARP 2500-like character.
 
 ## Remaining Open Questions
 
+### Aurora REV4 I2C Hardware Repair
+**Status**: Open — awaiting Qu-Bit response  
+**Priority**: Medium (blocks M5 only)  
+**Blocker**: Yes — blocks M5 (LED feedback)  
+**When**: When Qu-Bit responds with repair/replacement path  
+**Context**: Aurora REV4 unit has defective I2C bus. PCA9685 LED driver initialization
+locks up the device during `Init()`. All other controls (knobs, switches, gates) work
+fine via direct ADC/GPIO. Qu-Bit has been contacted. See ADR-004.  
+**Options**: Repair current unit, receive replacement, or defer LEDs to DPT/custom hardware.
+
+---
+
 ### Spread Range Calibration
 **Status**: Open  
 **Priority**: Medium  
@@ -85,4 +97,4 @@ clock sync, visual feedback.
 
 ---
 
-**Last Updated**: 2026-03-14
+**Last Updated**: 2026-03-15

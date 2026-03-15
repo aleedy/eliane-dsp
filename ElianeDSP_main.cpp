@@ -5,16 +5,18 @@
 //
 // This is intentionally throwaway scaffolding. The Engine class replaces
 // this in M2. See implementation-plan.md for details.
+//
+// NOTE: Using DaisySeed directly instead of Aurora Hardware due to Aurora REV4
+// I2C hardware defect. DaisySeed provides fully functional audio and GPIO.
 
-#include "aurora.h"
+#include "daisy_seed.h"
 #include "daisysp.h"
 #include "Constants.h"
 
 using namespace daisy;
-using namespace aurora;
 using namespace daisysp;
 
-Hardware hw;
+DaisySeed hw;
 Oscillator osc;
 
 void AudioCallback(AudioHandle::InputBuffer in,
@@ -22,16 +24,10 @@ void AudioCallback(AudioHandle::InputBuffer in,
                    size_t size)
 {
     (void)in;  // Input buffer unused in M1
-    hw.ProcessAllControls();
-
-    // Map KNOB_TIME to pitch: 20-2000 Hz, logarithmic
-    float knob = hw.GetKnobValue(KNOB_TIME);
-    float freq = fmap(knob,
-                      atelier::eliane::kMinPitchHz,
-                      atelier::eliane::kMaxPitchHz,
-                      Mapping::LOG);
-    osc.SetFreq(freq);
-
+    
+    // TODO M2: Add knob control for pitch via ADC on DaisySeed GPIO pins
+    // For now, M1 uses fixed frequency - proves audio path works
+    
     for (size_t i = 0; i < size; i++)
     {
         float sample = osc.Process();

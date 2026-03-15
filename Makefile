@@ -1,8 +1,8 @@
 # Project Name
 TARGET = ElianeDSP
 
-# Build for Daisy Bootloader
-APP_TYPE = BOOT_SRAM
+# Build for DFU flashing via CLI (changed from BOOT_SRAM to BOOT_NONE for DFU compatibility)
+APP_TYPE = BOOT_NONE
 
 # Sources — M1: main only, no Engine class yet
 CPP_SOURCES = ElianeDSP_main.cpp

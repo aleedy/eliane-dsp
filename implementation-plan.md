@@ -30,12 +30,12 @@ reusable components.
 ```
 eliane-dsp/
 ├── ElianeDSP_main.cpp              # Entry point: hardware init, audio callback, glue
-├── Makefile                         # Aurora-targeted build
+├── Makefile                         # DFU-targeted build (BOOT_NONE, see ADR-004)
 ├── Source/
 │   ├── Engine.h                     # DSP engine header (platform-agnostic)
 │   ├── Engine.cpp                   # DSP engine implementation
-│   ├── AuroraHal.h                  # Aurora hardware abstraction header
-│   ├── AuroraHal.cpp                # Aurora hardware abstraction implementation
+│   ├── DaisySeedHal.h               # DaisySeed hardware abstraction header (replaces AuroraHal, see ADR-004)
+│   ├── DaisySeedHal.cpp             # DaisySeed hardware abstraction implementation
 │   ├── SoftTakeover.h               # Soft takeover state machine (header-only)
 │   ├── CycledKnob.h                 # Cycled knob state machine (header-only)
 │   └── Constants.h                  # Tuning constants, defaults, ranges
@@ -53,12 +53,12 @@ eliane-dsp/
 
 ```makefile
 TARGET = ElianeDSP
-APP_TYPE = BOOT_SRAM
+APP_TYPE = BOOT_NONE
 
 CPP_SOURCES = \
     ElianeDSP_main.cpp \
     Source/Engine.cpp \
-    Source/AuroraHal.cpp
+    Source/DaisySeedHal.cpp
 
 AURORA_SDK_PATH = sdks/Aurora-SDK
 C_INCLUDES += -I$(AURORA_SDK_PATH)/include/ -ISource/
@@ -70,7 +70,11 @@ include $(SYSTEM_FILES_DIR)/Makefile
 ```
 
 **Build**: `make` produces `build/ElianeDSP.bin`
-**Deploy**: copy `build/ElianeDSP.bin` to USB drive, insert into Aurora, power on.
+**Deploy**: `make program-dfu` via Daisy Seed micro-USB (see ADR-004).
+
+> **Note**: `APP_TYPE` is `BOOT_NONE` (not `BOOT_SRAM`) due to Aurora REV4 I2C hardware
+> defect requiring DFU deploy. USB stick bootloader is not available after flashing
+> `BOOT_NONE`. See ADR-004 for details.
 
 ---
 
@@ -84,7 +88,7 @@ namespace for the instrument.
 namespace atelier {
 namespace eliane {
     class Engine;      // DSP core
-    class AuroraHal;   // Hardware abstraction
+    class DaisySeedHal;// Hardware abstraction (DaisySeed direct, see ADR-004)
     class SoftTakeover;
     class CycledKnob;
 }
@@ -378,40 +382,50 @@ private:
 
 ---
 
-### 4.5 AuroraHal (`Source/AuroraHal.h` / `Source/AuroraHal.cpp`)
+### 4.5 DaisySeedHal (`Source/DaisySeedHal.h` / `Source/DaisySeedHal.cpp`)
 
-**The only file that includes `aurora.h`**. Reads hardware controls, manages cycled
-knobs, maps raw values to engine parameters via direct setter calls, and drives LEDs.
+**Replaces `AuroraHal`** due to Aurora REV4 I2C hardware defect (see ADR-004).
+Uses `daisy::DaisySeed` directly instead of `aurora::Hardware`. Configures ADC and
+GPIO pins manually using the REV4 pin mappings. No I2C initialization — LEDs are
+inaccessible.
+
+**The only file that includes `daisy_seed.h`** (besides `main.cpp`). Reads hardware
+controls, manages cycled knobs, maps raw values to engine parameters via direct
+setter calls.
 
 #### Header
 
 ```cpp
 #pragma once
-#include "aurora.h"
+#include "daisy_seed.h"
 #include "Engine.h"
 #include "CycledKnob.h"
 
 namespace atelier {
 namespace eliane {
 
-class AuroraHal {
+class DaisySeedHal {
 public:
-    AuroraHal() = default;
+    DaisySeedHal() = default;
 
-    void Init(aurora::Hardware& hw, Engine& engine);
+    // Configures ADC channels and GPIO pins for Aurora REV4 controls.
+    // Must be called after seed.Init().
+    void Init(daisy::DaisySeed& seed, Engine& engine);
 
-    // Call once per audio block, after hw.ProcessAllControls()
-    void ProcessControls(aurora::Hardware& hw, Engine& engine);
+    // Call once per audio block — reads ADC/GPIO, updates engine parameters
+    void ProcessControls(daisy::DaisySeed& seed, Engine& engine);
 
-    // Call in main loop — drives LEDs for channel indicators and soft takeover
-    void UpdateLeds(aurora::Hardware& hw);
+    // Placeholder — LEDs blocked due to I2C defect (ADR-004).
+    // Retained for API compatibility; will drive PCA9685 when hardware is repaired.
+    void UpdateLeds(daisy::DaisySeed& seed);
 
 private:
     CycledKnob mix_knob_;
     CycledKnob res_knob_;
 
-    // LED animation state
-    float led_phase_ = 0.0f;
+    // Debounced switch state
+    daisy::Switch sw_freeze_;
+    daisy::Switch sw_reverse_;
 
     // Mapping helpers
     float MapPitch(float knob_val);       // fmap LOG: kMinPitchHz..kMaxPitchHz
@@ -423,41 +437,43 @@ private:
 }  // namespace atelier
 ```
 
-#### Control Mapping
+#### Control Mapping (Aurora REV4 via DaisySeed)
 
-| Aurora Control   | Mapped To                           | Mapping Function              |
-|------------------|-------------------------------------|-------------------------------|
-| `KNOB_TIME`      | `engine.SetPitchA(freq)`            | `fmap(val, 20, 2000, LOG)`   |
-| `KNOB_REFLECT`   | `engine.SetPitchB(freq)`            | `fmap(val, 20, 2000, LOG)`   |
-| `KNOB_MIX`       | `engine.SetSpreadA(delta)`          | `(val - 0.5) * 2 * kMaxSpreadHz` |
-| `KNOB_ATMOSPHERE` | `engine.SetSpreadB(delta)`         | `(val - 0.5) * 2 * kMaxSpreadHz` |
-| `KNOB_BLUR`      | `engine.SetMixLevel(ch, level)`     | via `CycledKnob` + soft takeover |
-| `KNOB_WARP`      | `engine.SetResonance(ch, res)`      | via `CycledKnob` + soft takeover |
-| `SW_FREEZE`      | `mix_knob_.Advance()`              | on `RisingEdge()`             |
-| `SW_REVERSE`     | `res_knob_.Advance()`              | on `RisingEdge()`             |
+| Daisy Pin | Aurora Equivalent | Mapped To                           | Mapping Function              |
+|-----------|-------------------|-------------------------------------|-------------------------------|
+| `seed::A0`  | `KNOB_TIME`      | `engine.SetPitchA(freq)`            | `fmap(val, 20, 2000, LOG)`   |
+| `seed::A1`  | `KNOB_REFLECT`   | `engine.SetPitchB(freq)`            | `fmap(val, 20, 2000, LOG)`   |
+| `seed::A8`  | `KNOB_MIX`       | `engine.SetSpreadA(delta)`          | `(val - 0.5) * 2 * kMaxSpreadHz` |
+| `seed::A10` | `KNOB_ATMOSPHERE` | `engine.SetSpreadB(delta)`         | `(val - 0.5) * 2 * kMaxSpreadHz` |
+| `seed::A11` | `KNOB_BLUR`      | `engine.SetMixLevel(ch, level)`     | via `CycledKnob` + soft takeover |
+| `seed::A9`  | `KNOB_WARP`      | `engine.SetResonance(ch, res)`      | via `CycledKnob` + soft takeover |
+| D1          | `SW_FREEZE`      | `mix_knob_.Advance()`              | on `RisingEdge()`             |
+| D9          | `SW_REVERSE`     | `res_knob_.Advance()`              | on `RisingEdge()`             |
+
+See ADR-004 for full REV4 pin reference table.
 
 ---
 
 ### 4.6 Main Entry Point (`ElianeDSP_main.cpp`)
 
 Minimal glue. Owns static instances, wires audio callback, starts the system.
+Uses `DaisySeed` directly — no Aurora `Hardware` class (see ADR-004).
 
 ```cpp
-#include "aurora.h"
+#include "daisy_seed.h"
 #include "daisysp.h"
 #include "Engine.h"
-#include "AuroraHal.h"
+#include "DaisySeedHal.h"
 
 using namespace atelier::eliane;
 
-static aurora::Hardware hw;
+static daisy::DaisySeed hw;
 static Engine engine;
-static AuroraHal hal;
+static DaisySeedHal hal;
 
 void AudioCallback(daisy::AudioHandle::InputBuffer in,
                    daisy::AudioHandle::OutputBuffer out,
                    size_t size) {
-    hw.ProcessAllControls();
     hal.ProcessControls(hw, engine);
 
     for (size_t i = 0; i < size; i++) {
@@ -474,8 +490,7 @@ int main(void) {
     hw.StartAudio(AudioCallback);
 
     while (1) {
-        hal.UpdateLeds(hw);
-        hw.WriteLeds();
+        hal.UpdateLeds(hw);  // No-op until I2C hardware repaired (ADR-004)
     }
 }
 ```
@@ -513,7 +528,7 @@ These rules apply to all milestones. Violation of any rule is a bug.
 1. **No heap allocation** (`new`, `malloc`, `std::vector`, `std::string`) in the audio
    callback or any code called from it. All DSP objects are statically allocated.
 2. **No blocking I/O** (I2C, SPI, UART, USB) in the audio callback. LED writes
-   (`hw.WriteLeds()`) run in the `main()` loop, not the callback.
+   (when I2C is available) run in the `main()` loop, not the callback.
 3. **Bounded per-sample operations**: No data-dependent loops, no recursion, no
    unbounded iteration inside `Engine::Process()`. Every code path has a fixed,
    deterministic cost.
@@ -527,25 +542,29 @@ These rules apply to all milestones. Violation of any rule is a bug.
 
 ## 5. Milestones
 
-### M1: Single Oscillator → Audio Out
+### M1: Single Oscillator → Audio Out ✅ COMPLETE
 
-**Goal**: Prove the toolchain, Makefile, USB deploy, and audio output all work.
-Get a sine tone playing through Aurora.
+**Goal**: Prove the toolchain, Makefile, DFU deploy, and audio output all work.
+Get a sine tone playing through the Daisy Seed on the Aurora board.
 
 **Files created**:
-- `Makefile` (minimal — only `ElianeDSP_main.cpp` in `CPP_SOURCES`)
-- `ElianeDSP_main.cpp` (minimal: one `daisysp::Oscillator` → stereo out)
+- `Makefile` (minimal — only `ElianeDSP_main.cpp` in `CPP_SOURCES`, `BOOT_NONE` for DFU)
+- `ElianeDSP_main.cpp` (minimal: one `daisysp::Oscillator` → stereo out, using `DaisySeed` directly)
 - `Source/Constants.h` (just `kDefaultPitchA`, `kMinPitchHz`, `kMaxPitchHz`)
 
 **Engine class is NOT created yet** — oscillator lives directly in `main.cpp`.
 This is intentionally throwaway scaffolding. The goal is proving hardware/build
 before investing in architecture.
 
+**Key discovery during M1**: Aurora REV4 I2C bus is defective — PCA9685 LED driver
+initialization locks up the device. Switched from `aurora::Hardware` to `DaisySeed`
+direct. See ADR-004 for details.
+
 **Acceptance criteria**:
-- [ ] `make` produces `build/ElianeDSP.bin` without errors or warnings
-- [ ] Binary size < 256 KB
-- [ ] Copying `.bin` to USB drive and booting Aurora produces an audible 80 Hz sine tone
-- [ ] `KNOB_TIME` changes the pitch (`fmap` to 20-2000 Hz, logarithmic)
+- [x] `make` produces `build/ElianeDSP.bin` without errors or warnings
+- [x] Binary size < 256 KB
+- [x] Flashing via `make program-dfu` and powering Aurora produces an audible 80 Hz sine tone
+- [ ] ~~`KNOB_TIME` changes the pitch~~ — Deferred to M2 (M1 uses fixed frequency to isolate audio path from control path)
 
 ---
 
@@ -563,19 +582,19 @@ milestone**: if this doesn't sound right, we adjust before building further.
 - `ElianeDSP_main.cpp` — refactored to use `Engine` class
 - `Makefile` — add `Source/Engine.cpp` to `CPP_SOURCES`
 
-**Temporary control mapping (M2 only)**:
-| Knob | Function |
-|------|----------|
-| `KNOB_TIME` | Pitch A (base frequency) |
-| `KNOB_MIX` | Spread A (through-zero detuning) |
-| `KNOB_WARP` | LPF A resonance |
+**Temporary control mapping (M2 only — via DaisySeed ADC, see ADR-004)**:
+| Daisy Pin | Aurora Equiv. | Function |
+|-----------|--------------|----------|
+| `seed::A0` | `KNOB_TIME` | Pitch A (base frequency) |
+| `seed::A8` | `KNOB_MIX` | Spread A (through-zero detuning) |
+| `seed::A9` | `KNOB_WARP` | LPF A resonance |
 
 **Acceptance criteria**:
-- [ ] `KNOB_TIME` controls base frequency of both oscillators
-- [ ] `KNOB_MIX` controls spread — audible slow beating at small values (~1-2 Hz)
+- [ ] `seed::A0` (KNOB_TIME) controls base frequency of both oscillators
+- [ ] `seed::A8` (KNOB_MIX) controls spread — audible slow beating at small values (~1-2 Hz)
 - [ ] Through-zero behavior: center position = perfect unison (no beating)
 - [ ] LPF tracks at 2 × pitch, cleaning up the output
-- [ ] `KNOB_WARP` sweeps filter resonance (audible peak)
+- [ ] `seed::A9` (KNOB_WARP) sweeps filter resonance (audible peak)
 - [ ] Sound is recognizably "Radigue" — slow pulsing drones
 - [ ] No audible zipper noise when sweeping spread continuously
 - [ ] CPU load < 20% (measured via `CpuLoadMeter` or block timing)
@@ -599,23 +618,23 @@ milestone**: if this doesn't sound right, we adjust before building further.
 - `Source/Constants.h` — add Pitch B default
 - `ElianeDSP_main.cpp` — map all 4 direct knobs
 
-**Temporary control mapping (M3 — before cycled knobs)**:
-| Knob | Function |
-|------|----------|
-| `KNOB_TIME` | Pitch A |
-| `KNOB_REFLECT` | Pitch B |
-| `KNOB_MIX` | Spread A |
-| `KNOB_ATMOSPHERE` | Spread B |
-| `KNOB_BLUR` | Mix (all 3 channels equally — temporary) |
-| `KNOB_WARP` | Resonance (all 3 filters equally — temporary) |
+**Temporary control mapping (M3 — before cycled knobs, via DaisySeed ADC)**:
+| Daisy Pin | Aurora Equiv. | Function |
+|-----------|--------------|----------|
+| `seed::A0` | `KNOB_TIME` | Pitch A |
+| `seed::A1` | `KNOB_REFLECT` | Pitch B |
+| `seed::A8` | `KNOB_MIX` | Spread A |
+| `seed::A10` | `KNOB_ATMOSPHERE` | Spread B |
+| `seed::A11` | `KNOB_BLUR` | Mix (all 3 channels equally — temporary) |
+| `seed::A9` | `KNOB_WARP` | Resonance (all 3 filters equally — temporary) |
 
 **Acceptance criteria**:
 - [ ] Two independent oscillator pairs audible with separate pitch control
 - [ ] Cross-ring-mod (Ring Mod C) producing additional tonal complexity
 - [ ] LPF C tracking at `2×pitchA + 2×pitchB`
 - [ ] All 4 direct knobs affecting their respective parameters
-- [ ] `KNOB_BLUR` fading all 3 channels uniformly
-- [ ] `KNOB_WARP` sweeping all 3 filters uniformly
+- [ ] `seed::A11` (KNOB_BLUR) fading all 3 channels uniformly
+- [ ] `seed::A9` (KNOB_WARP) sweeping all 3 filters uniformly
 - [ ] Different Pair A / Pair B pitches produce clearly different beating patterns
 - [ ] CPU load < 30% (full signal path)
 - [ ] No audible zipper noise on any parameter sweep
@@ -625,34 +644,44 @@ headers on the include path to catch accidental platform coupling.
 
 ---
 
-### M4: Aurora HAL + Cycled Knobs + Soft Takeover
+### M4: DaisySeed HAL + Cycled Knobs + Soft Takeover
 
-**Goal**: Full control surface. Extract Aurora-specific code into `AuroraHal`.
+**Goal**: Full control surface. Extract hardware-specific code into `DaisySeedHal`.
 Implement cycled knobs for independent mix/resonance control per channel.
 
+> **Note**: Originally planned as `AuroraHal` wrapping `aurora::Hardware`. Changed to
+> `DaisySeedHal` using `daisy::DaisySeed` directly due to Aurora REV4 I2C defect
+> (ADR-004). The HAL configures ADC channels and GPIO pins manually using known REV4
+> pin mappings. LED feedback is deferred to M5 (blocked on I2C repair).
+
 **Files created**:
-- `Source/AuroraHal.h` / `Source/AuroraHal.cpp`
+- `Source/DaisySeedHal.h` / `Source/DaisySeedHal.cpp`
 - `Source/SoftTakeover.h`
 - `Source/CycledKnob.h`
 
 **Files modified**:
 - `ElianeDSP_main.cpp` — simplified to thin glue (as shown in section 4.6)
-- `Makefile` — add `Source/AuroraHal.cpp` to `CPP_SOURCES`
+- `Makefile` — add `Source/DaisySeedHal.cpp` to `CPP_SOURCES`
 
 **Acceptance criteria**:
-- [ ] `SW_FREEZE` cycles mix channel: A → B → C → A
-- [ ] `SW_REVERSE` cycles resonance filter: A → B → C → A
+- [ ] `SW_FREEZE` (D1) cycles mix channel: A → B → C → A
+- [ ] `SW_REVERSE` (D9) cycles resonance filter: A → B → C → A
 - [ ] Soft takeover prevents audible parameter jumps when cycling
 - [ ] Stored values persist when cycling away from and back to a channel
-- [ ] Each mix channel independently controllable via `KNOB_BLUR`
-- [ ] Each filter resonance independently controllable via `KNOB_WARP`
+- [ ] Each mix channel independently controllable via `seed::A11` (KNOB_BLUR)
+- [ ] Each filter resonance independently controllable via `seed::A9` (KNOB_WARP)
 - [ ] All 10 parameters (4 direct + 3 mix + 3 resonance) independently controllable
 - [ ] Engine has zero Aurora SDK imports (verified: `grep -r "aurora" Source/Engine.*` returns nothing)
+- [ ] DaisySeedHal has zero `aurora.h` imports (verified: `grep -r "aurora" Source/DaisySeedHal.*` returns nothing)
 - [ ] No audible parameter jumps when cycling channels (soft takeover working)
 
 ---
 
-### M5: LED Feedback System
+### M5: LED Feedback System — ⛔ BLOCKED (I2C Hardware Defect)
+
+**Status**: Blocked — requires functional I2C bus for PCA9685 LED drivers.
+Qu-Bit has been contacted about repair/replacement. This milestone is fully designed
+and ready to implement when hardware is available. See ADR-004.
 
 **Goal**: Visual feedback for channel selection and soft takeover direction.
 Makes the cycled knob system actually usable.
@@ -703,15 +732,17 @@ color    = (knob_position < stored_value) ? BLUE : RED
 
 ```
 M1 ──► M2 ──► M3 ──► M4 ──► M5
+ ✅                           ⛔ BLOCKED (I2C)
 
-M1: Prove build/deploy             (hours)
+M1: Prove build/deploy             ✅ COMPLETE
 M2: Core sound validation          (hours)
 M3: Complete synthesis              (hours)
 M4: Full control surface           (day)
-M5: LED polish                     (hours)
+M5: LED polish                     ⛔ BLOCKED — awaiting I2C hardware repair
 ```
 
 Each milestone is independently deployable and testable on hardware.
+All milestones use DaisySeed directly (no `aurora::Hardware`) — see ADR-004.
 
 ---
 
@@ -725,9 +756,10 @@ Each milestone is independently deployable and testable on hardware.
 | Parameter smoothing via `fonepole()` in Engine | Cheapest smoothing — single multiply+add per param per sample. DaisySP-native. |
 | SoftTakeover + CycledKnob as header-only | Small classes (~40 lines each), no `.cpp` needed, easy to test/reuse |
 | M1 skips Engine class | Fastest path to proving build/deploy works — refactored in M2 |
+| AuroraHal → DaisySeedHal | Aurora REV4 I2C defect (ADR-004). DaisySeed direct access to ADC/GPIO. No LED support until hardware repaired. |
 | `atelier::eliane` namespace | Room for future instruments under `atelier::` |
-| AuroraHal is the only file importing `aurora.h` | Engine has zero hardware coupling — portable to DPT or custom HAL |
-| LEDs updated in `main()` loop, not audio callback | Audio callback runs at 500 Hz (48kHz/96 samples). LED I2C writes are slow. Keep them out of the real-time path. |
+| DaisySeedHal is the only file importing `daisy_seed.h` (besides main) | Engine has zero hardware coupling — portable to DPT or custom HAL |
+| LEDs blocked; `UpdateLeds()` is a no-op | M5 design preserved for when I2C is repaired. HAL API stays stable. |
 
 ---
 
@@ -769,11 +801,13 @@ Load skill files:
 SDKs are cloned at: /Users/adamleedy/claude/projects/eliane-dsp/sdks/
   Aurora-SDK/, DaisySP/, libDaisy/, dpt/, simple-designer-instruments/
 
-CURRENT STATUS: [update with current milestone and what was last completed]
+CURRENT STATUS: M1 complete. Using DaisySeed directly (not aurora::Hardware) due to
+I2C hardware defect — see ADR-004. DFU deploy via `make program-dfu`. M5 blocked
+pending I2C repair. Qu-Bit contacted.
 
 TASK: [describe what to work on next]
 ```
 
 ---
 
-**Last Updated**: 2026-03-14 (rev 2 — incorporates Nick Donaldson review feedback)
+**Last Updated**: 2026-03-15 (rev 3 — DaisySeed direct approach, ADR-004, M1 complete, M5 blocked)

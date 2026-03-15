@@ -33,14 +33,19 @@ Filter cutoffs auto-track the oscillator pitches: LPF A = 2x pitch A, LPF B = 2x
 
 The DSP engine is **platform-agnostic** — it depends only on [DaisySP](https://github.com/electro-smith/DaisySP) and [libDaisy](https://github.com/electro-smith/libDaisy), with no direct hardware coupling. A separate hardware abstraction layer (HAL) handles platform-specific control mapping.
 
+> **Note**: Due to an I2C hardware defect on the Aurora REV4 unit, we bypass `aurora::Hardware`
+> entirely and use `daisy::DaisySeed` directly. All controls (knobs, switches, gates) are
+> accessible via direct ADC/GPIO pins. Only the LEDs (PCA9685 I2C drivers) are inaccessible.
+> See ADR-004 in [Architecture Decisions](architecture-decisions.md).
+
 ```
 eliane-dsp/
 ├── ElianeDSP_main.cpp          # Entry point: hardware init, audio callback
-├── Makefile                     # Aurora-targeted build
+├── Makefile                     # DFU-targeted build (BOOT_NONE)
 ├── Source/
 │   ├── Constants.h              # Tuning constants, defaults, ranges
 │   ├── Engine.h / Engine.cpp    # Platform-agnostic DSP engine (M2+)
-│   ├── AuroraHal.h / .cpp       # Aurora hardware abstraction (M4+)
+│   ├── DaisySeedHal.h / .cpp    # DaisySeed hardware abstraction (M4+)
 │   ├── SoftTakeover.h           # Knob catch state machine (M4+)
 │   └── CycledKnob.h            # Multi-parameter knob cycling (M4+)
 └── sdks/                        # Git submodules
@@ -57,10 +62,16 @@ Key design decisions:
 - **Engine with setter methods** — HAL calls `SetPitchA()`, `SetSpreadA()`, etc. at block rate; Engine smooths parameters per-sample via `fonepole()`
 - **No heap allocation** in the audio path — all DSP objects statically allocated
 - **`atelier::eliane` namespace** — room for future instruments under `atelier::`
+- **DaisySeed direct** — bypasses Aurora HAL due to I2C defect (ADR-004); all controls read via direct ADC/GPIO
 
 ## Hardware Target: Qu-Bit Aurora
 
 The initial proof-of-concept targets the [Qu-Bit Aurora](https://www.qubitelectronix.com/shop/aurora), a Daisy Seed-based eurorack module. The Aurora provides 6 knobs (normalled to CV), 3 momentary switches, 2 gate inputs, and 11 RGB LEDs.
+
+> **Hardware limitation**: The current Aurora REV4 unit has a defective I2C bus. The PCA9685
+> LED drivers lock up during initialization. We bypass `aurora::Hardware` and use `DaisySeed`
+> directly — knobs, switches, and gates all work via direct ADC/GPIO. LEDs are unavailable
+> until the hardware is repaired. See ADR-004.
 
 ### Control Mapping
 
@@ -106,19 +117,25 @@ This produces `build/ElianeDSP.bin`.
 
 ### Deploy to Aurora
 
-1. Copy `build/ElianeDSP.bin` to a USB drive
-2. Insert USB drive into Aurora
-3. Power on — Aurora loads the firmware automatically
+Firmware is deployed via DFU over the Daisy Seed's micro-USB port:
+
+```bash
+# Put Daisy into DFU mode (hold BOOT, press RESET, release BOOT)
+make program-dfu
+```
+
+> **Note**: USB stick deployment is not available. The firmware uses `APP_TYPE = BOOT_NONE`
+> (required for DFU), which overwrites the Daisy bootloader. See ADR-004 for context.
 
 ## Development Roadmap
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
-| **M1** | Single oscillator — prove build/deploy pipeline | Complete |
+| **M1** | Single oscillator — prove build/deploy pipeline | **Complete** |
 | **M2** | One pair + ring mod + filter — core sound validation | Pending |
 | **M3** | Full signal path — both pairs, cross-mod, mixer | Pending |
-| **M4** | Aurora HAL + cycled knobs + soft takeover | Pending |
-| **M5** | LED feedback system | Pending |
+| **M4** | DaisySeed HAL + cycled knobs + soft takeover | Pending |
+| **M5** | LED feedback system | **Blocked** (I2C defect) |
 
 Each milestone produces a deployable binary testable on hardware. M2 is the **artistic validation milestone** — the sound must be recognizably Radigue (slow beating drones from near-unison sine ring modulation) before proceeding further.
 

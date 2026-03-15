@@ -23,10 +23,16 @@ Audio DSP synthesis firmware for Daisy-based hardware, implementing a complex au
 
 ### Phase 1: POC (Aurora)
 - **Device**: Qu-Bit Aurora (Daisy Seed-based eurorack reverb platform)
+- **Revision**: REV4 (Daisy Seed 2 DFM with built-in codec)
 - **SDK**: Aurora SDK (https://github.com/qu-bit-electronix/Aurora-SDK)
 - **Purpose**: Prove concept viability in hardware
 - **Controls**: Knobs, CV inputs, audio I/O
 - **Audio**: Stereo in/out with integrated audio codec
+- **⚠️ Hardware Issue**: I2C bus defective — PCA9685 LED drivers lock up during init.
+  Using `DaisySeed` directly instead of Aurora `Hardware` class.
+  Knobs/switches/gates accessible via direct ADC/GPIO. LEDs inaccessible.
+  Qu-Bit contacted for repair/replacement. See ADR-004.
+- **Deploy**: DFU via `make program-dfu` (USB stick bootloader not available with `BOOT_NONE`)
 
 ### Phase 2: Port to dsp.coffee DPT (optional)
 - **Device**: dsp.coffee DPT (Daisy Patch Submodule-based multifunction module)
@@ -75,21 +81,21 @@ Audio DSP synthesis firmware for Daisy-based hardware, implementing a complex au
 
 ## Key Milestones
 
-1. Architecture design - platform abstraction strategy
-2. Aurora POC implementation - basic synthesis engine + controls
-3. Code review for portability - identify Aurora-specific coupling
-4. DPT port - validate architecture on different hardware
+1. ~~Architecture design — platform abstraction strategy~~ ✅
+2. Aurora POC implementation — ~~basic synthesis engine + controls~~ M1 complete (DaisySeed direct), M2-M4 pending
+3. Code review for portability — identify Aurora-specific coupling
+4. DPT port — validate architecture on different hardware
 5. Custom hardware design & integration
 
 ---
 
 ## Next Steps
 
-1. Define synthesis engine architecture (oscillators, filters, modulators, feedback loops)
-2. Design platform abstraction layer (HAL)
-3. Plan Aurora POC MVP scope
-4. Set up initial codebase structure
+1. **M2**: Build Engine class with one oscillator pair + ring mod + filter — core sound validation
+2. **M3**: Expand Engine to full signal path (both pairs, cross-mod, mixer)
+3. **M4**: Build DaisySeedHal — configure ADC/GPIO for all knobs/switches, implement cycled knobs
+4. Resolve Qu-Bit I2C repair — unblocks M5 (LED feedback)
 
 ---
 
-**Last Updated**: 2026-03-14
+**Last Updated**: 2026-03-15

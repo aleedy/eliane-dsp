@@ -111,4 +111,85 @@ filter type, waveform, output mode, LPF C tracking, and pair pitch ratio.
 
 ---
 
-**Last Updated**: 2026-03-14
+### ADR-004: DaisySeed Direct — Aurora REV4 I2C Hardware Defect Workaround
+
+**Date**: 2026-03-15  
+**Status**: Accepted  
+**Context**: Aurora REV4 unit has a defective I2C bus. Initializing the Aurora `Hardware`
+class calls `ConfigureLeds()`, which initializes I2C_1 at 1 MHz and attempts to
+communicate with two PCA9685 LED driver chips (addresses `0x40`, `0x41`). This locks up
+the device during `Init()` — firmware never reaches the audio callback.
+
+The I2C bus on Aurora carries only:
+- 2x PCA9685 LED drivers (11 RGB LEDs) — **both revisions**
+- PCM3060 audio codec — **REV3 only** (REV4/DFM has built-in codec, no I2C needed)
+
+All other controls are on direct Daisy Seed pins:
+- **6 knobs**: individual ADC pins (REV4: A0, A1, A8-A11)
+- **6 CV inputs**: individual ADC pins (REV4: A2-A7), bipolar -5V to +5V
+- **3 switches**: GPIO with internal pullup (D1, D9, D13)
+- **2 gate inputs**: GPIO (D26, D14)
+
+Since the REV4's audio codec is built-in (initialized by `seed.Init()`), I2C is only
+needed for LEDs on this hardware revision.
+
+**Decision**: Bypass `aurora::Hardware` entirely. Use `daisy::DaisySeed` directly for
+all hardware initialization and audio. Configure ADC and GPIO pins manually using the
+REV4 pin mappings extracted from `aurora.h`. LEDs are inaccessible until hardware is
+repaired or replaced.
+
+**Rationale**:
+- `DaisySeed::Init()` brings up clocks, SDRAM, QSPI, and the built-in audio codec — no I2C
+- Knobs, switches, and gates are all on direct ADC/GPIO pins — no I2C required to read them
+- The Engine class is already platform-agnostic (depends only on DaisySP) — unaffected
+- This approach was validated in M1: sine oscillator plays correctly through DaisySeed
+
+**Deployment change**: `APP_TYPE` changed from `BOOT_SRAM` to `BOOT_NONE`. This means
+firmware is flashed via DFU (`make program-dfu`) instead of the USB stick bootloader.
+The USB stick process itself doesn't depend on I2C, but after flashing a `BOOT_NONE`
+binary the bootloader is overwritten and USB stick deploy is no longer available.
+DFU is the standard deploy method going forward.
+
+**Consequences**:
+- M5 (LED feedback) is **blocked** until I2C hardware is repaired or unit is replaced
+  - Qu-Bit has been contacted about a replacement/repair
+  - M5 remains fully designed and ready to implement when hardware is available
+- M4 HAL class becomes `DaisySeedHal` instead of `AuroraHal` — configures ADC/GPIO
+  directly using known REV4 pin mappings rather than wrapping `aurora::Hardware`
+- Cycled knobs and soft takeover logic are unchanged — they operate on normalized
+  0.0-1.0 knob values regardless of how those values are read
+- No USB stick deploy — DFU only (acceptable for development; DPT and custom
+  hardware will have their own deploy methods)
+- The Daisy Seed's single onboard GPIO LED remains available for basic status indication
+
+**REV4 Pin Reference** (extracted from `aurora.h`):
+
+| Control | Type | Daisy Seed Pin | Notes |
+|---------|------|---------------|-------|
+| KNOB_TIME | ADC | `seed::A0` (D15) | Pitch A |
+| KNOB_REFLECT | ADC | `seed::A1` (D16) | Pitch B |
+| KNOB_MIX | ADC | `seed::A8` (D23) | Spread A |
+| KNOB_WARP | ADC | `seed::A9` (D24) | Filter Res (cycled) |
+| KNOB_ATMOSPHERE | ADC | `seed::A10` (D25) | Spread B |
+| KNOB_BLUR | ADC | `seed::A11` (D28) | Mix Level (cycled) |
+| CV_ATMOSPHERE | ADC | `seed::A2` (D17) | Bipolar |
+| CV_TIME | ADC | `seed::A3` (D18) | Bipolar |
+| CV_MIX | ADC | `seed::A4` (D19) | Bipolar |
+| CV_REFLECT | ADC | `seed::A5` (D20) | Bipolar |
+| CV_BLUR | ADC | `seed::A6` (D21) | Bipolar |
+| CV_WARP | ADC | `seed::A7` (D22) | Bipolar |
+| SW_FREEZE | GPIO | D1 (PORTC, 11) | Pullup, active-low |
+| SW_REVERSE | GPIO | D9 (PORTB, 4) | Pullup, active-low |
+| SW_SHIFT | GPIO | D13 (PORTB, 6) | Pullup, active-low |
+| GATE_FREEZE | GPIO | D26 (PORTD, 11) | REV4 only |
+| GATE_REVERSE | GPIO | D14 (PORTB, 7) | Both revisions |
+
+**Alternatives Considered**:
+- Selective Aurora init (skip `ConfigureLeds()` only): Aurora `Hardware::Init()` is
+  monolithic — can't skip individual subsystems without modifying the SDK source
+- Fork Aurora SDK to remove LED init: adds maintenance burden, coupling to forked SDK
+- Use only the Daisy Seed onboard LED: insufficient for soft takeover feedback
+
+---
+
+**Last Updated**: 2026-03-15
